@@ -1,103 +1,72 @@
-# Speichere das als trading_bot.py auf https://share.streamlit.io (kostenlos online)
-
 import streamlit as st
-import yfinance as yf
 import pandas as pd
+import yfinance as yf
 import numpy as np
-import matplotlib.pyplot as plt
+import datetime
 
-st.title("Crypto Trading Bot Simulator (RSI + SMA)")
-
-# 1. Daten laden
-@st.cache_data(ttl=3600)
-def load_data(symbol="BTC-USD", period="1y", interval="1h"):
-    df = yf.download(symbol, period=period, interval=interval)
-    df = df.dropna()
-    return df
-
-df = load_data()
-
-# 2. Indikatoren berechnen
-def compute_indicators(data):
-    close = data['Close']
-    delta = close.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+# RSI berechnen
+def compute_rsi(data, window=14):
+    delta = data['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
     rs = gain / loss
     rsi = 100 - (100 / (1 + rs))
-    sma_50 = close.rolling(window=50).mean()
-    sma_200 = close.rolling(window=200).mean()
-    data['RSI'] = rsi
-    data['SMA50'] = sma_50
-    data['SMA200'] = sma_200
-    return data
+    return rsi
 
-df = compute_indicators(df)
-
-# 3. Backtest-Funktion
-def backtest_strategy(data, initial_capital=1000):
-    capital = initial_capital
-    position = 0  # BTC Menge
+# Strategie-Backtest
+def backtest_strategy(data):
+    capital = 1000  # Startkapital
+    position = 0    # Coins
     capital_history = []
 
     for i in range(1, len(data)):
         row = data.iloc[i]
         price = row['Close']
+        rsi = row['RSI']
+        sma50 = row['SMA50']
+        sma200 = row['SMA200']
 
-        # Prüfen ob wichtige Indikatoren vorhanden sind (nicht NaN)
-        if pd.isna(row['RSI']) or pd.isna(row['SMA50']) or pd.isna(row['SMA200']):
+        # NaNs überspringen
+        if pd.isna(rsi) or pd.isna(sma50) or pd.isna(sma200):
             capital_history.append(capital + position * price)
             continue
 
-        # Signale: Buy wenn RSI < 30 und SMA50 > SMA200
-        if row['RSI'] < 30 and row['SMA50'] > row['SMA200'] and position == 0:
+        # Buy-Signal
+        if rsi < 30 and sma50 > sma200 and position == 0:
             buy_amount = (capital * 0.1) / price
             position += buy_amount
             capital -= buy_amount * price
-        # Sell wenn RSI > 70 und Position gehalten
-        elif row['RSI'] > 70 and position > 0:
+        # Sell-Signal
+        elif rsi > 70 and position > 0:
             capital += position * price
             position = 0
 
-        total_value = capital + position * price
-        capital_history.append(total_value)
+        capital_history.append(capital + position * price)
 
     return capital_history
 
+# GUI mit Streamlit
+st.title("🧠 Krypto-Trading-Bot mit RSI + SMA Backtest")
 
-# 4. Backtest starten
-if st.button("Backtest starten"):
-    capital_history = backtest_strategy(df)
-    st.write(f"Startkapital: 1000 USD")
-    st.write(f"Endkapital: {capital_history[-1]:.2f} USD")
-    st.write(f"Gewinn: {capital_history[-1] - 1000:.2f} USD")
+symbol = st.text_input("Gib ein Symbol ein (z. B. BTC-USD, ETH-USD)", "BTC-USD")
+start_date = st.date_input("Startdatum", datetime.date(2023, 1, 1))
+end_date = st.date_input("Enddatum", datetime.date.today())
 
-    # Plot Kapitalverlauf
-    fig, ax = plt.subplots()
-    ax.plot(capital_history)
-    ax.set_title("Kapitalverlauf im Backtest")
-    ax.set_xlabel("Zeitschritte (Stunden)")
-    ax.set_ylabel("Kapital (USD)")
-    st.pyplot(fig)
+if st.button("Starte Backtest"):
+    with st.spinner("Lade Daten..."):
+        df = yf.download(symbol, start=start_date, end=end_date)
+        df['SMA50'] = df['Close'].rolling(window=50).mean()
+        df['SMA200'] = df['Close'].rolling(window=200).mean()
+        df['RSI'] = compute_rsi(df)
 
-# 5. Charts anzeigen
-st.subheader("Kursverlauf mit Indikatoren")
-fig2, ax2 = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+        st.subheader("Kursverlauf")
+        st.line_chart(df[['Close', 'SMA50', 'SMA200']])
 
-ax2[0].plot(df.index, df['Close'], label='Close')
-ax2[0].plot(df.index, df['SMA50'], label='SMA 50')
-ax2[0].plot(df.index, df['SMA200'], label='SMA 200')
-ax2[0].set_ylabel("Preis (USD)")
-ax2[0].legend()
+        st.subheader("RSI")
+        st.line_chart(df[['RSI']])
 
-ax2[1].plot(df.index, df['RSI'], label='RSI', color='orange')
-ax2[1].axhline(30, color='green', linestyle='--')
-ax2[1].axhline(70, color='red', linestyle='--')
-ax2[1].set_ylabel("RSI")
-ax2[1].legend()
+        st.subheader("Kapitalentwicklung (Backtest)")
+        capital_history = backtest_strategy(df)
+        st.line_chart(capital_history)
 
-ax2[2].plot(df.index, df['Close'], label='Close')
-ax2[2].set_ylabel("Preis (USD)")
-ax2[2].legend()
-
-st.pyplot(fig2)
+        st.success(f"Backtest beendet. Endkapital: {capital_history[-1]:.2f} $")
