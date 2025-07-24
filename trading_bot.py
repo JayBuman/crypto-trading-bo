@@ -42,12 +42,15 @@ def backtest_strategy(data, initial_capital=1000):
 
     for i in range(1, len(data)):
         row = data.iloc[i]
-        prev_row = data.iloc[i-1]
         price = row['Close']
+
+        # Prüfen ob wichtige Indikatoren vorhanden sind (nicht NaN)
+        if pd.isna(row['RSI']) or pd.isna(row['SMA50']) or pd.isna(row['SMA200']):
+            capital_history.append(capital + position * price)
+            continue
 
         # Signale: Buy wenn RSI < 30 und SMA50 > SMA200
         if row['RSI'] < 30 and row['SMA50'] > row['SMA200'] and position == 0:
-            # kaufen mit 10% Kapital
             buy_amount = (capital * 0.1) / price
             position += buy_amount
             capital -= buy_amount * price
@@ -55,11 +58,12 @@ def backtest_strategy(data, initial_capital=1000):
         elif row['RSI'] > 70 and position > 0:
             capital += position * price
             position = 0
-        # Kapital History inkl. aktuellem Wert von Position
+
         total_value = capital + position * price
         capital_history.append(total_value)
 
     return capital_history
+
 
 # 4. Backtest starten
 if st.button("Backtest starten"):
